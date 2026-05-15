@@ -90,5 +90,7 @@ To allow players to join from their mobile devices:
   - `/src/types`: TypeScript interfaces.
 
 
+# Run this powershell command to expose the shareable address
 
+New-NetFirewallRule -DisplayName "Node Dev Servers" -Direction Inbound -Protocol TCP -LocalPort 3000,5173 -Action Allow
 New-NetFirewallRule -DisplayName "Node Dev Servers" -Direction Inbound -Protocol TCP -LocalPort 3000,5173 -Action Allow

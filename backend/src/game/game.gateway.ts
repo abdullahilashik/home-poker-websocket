@@ -8,7 +8,6 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
-import type { GameState } from './interfaces/game-state.interface';
 
 @WebSocketGateway({
   cors: {
@@ -77,6 +76,24 @@ export class GameGateway implements OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('advance_street')
+  handleAdvanceStreet(@ConnectedSocket() client: Socket, @MessageBody() data: { sessionId: string }) {
+    try {
+      const state = this.gameService.getGame(data.sessionId);
+      if (!state) throw new Error('Game not found');
+
+      const player = state.players.find(p => p.socketId === client.id);
+      if (!player?.isHost) throw new Error('Only the host can advance streets');
+
+      const newState = this.gameService.advanceStreet(data.sessionId);
+      this.server.to(data.sessionId).emit('street_advanced', newState);
+      this.server.to(data.sessionId).emit('game_state', newState);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
   @SubscribeMessage('end_round')
   handleEndRound(@ConnectedSocket() client: Socket, @MessageBody() data: { sessionId: string }) {
     try {
@@ -122,6 +139,20 @@ export class GameGateway implements OnGatewayDisconnect {
   ) {
     try {
       const newState = this.gameService.placeBet(data.sessionId, data.playerId, data.amount);
+      this.server.to(data.sessionId).emit('game_state', newState);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  @SubscribeMessage('check')
+  handleCheck(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { sessionId: string; playerId: string },
+  ) {
+    try {
+      const newState = this.gameService.check(data.sessionId, data.playerId);
       this.server.to(data.sessionId).emit('game_state', newState);
       return { success: true };
     } catch (e) {

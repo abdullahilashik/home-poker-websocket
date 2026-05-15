@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { socketService } from '../services/socket';
-import { BookOpen, Trophy, X, UserX, Coins, TrendingUp, UserCheck, Play, StopCircle, RefreshCw, Plus, Copy, Check, Ban, UserMinus, Settings, Save } from 'lucide-react';
+import { BookOpen, Trophy, X, UserX, Coins, TrendingUp, UserCheck, Play, StopCircle, SkipForward, ChevronRight, RefreshCw, Plus, Copy, Check, CheckCircle, Ban, UserMinus, Settings, Save, History } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const GamePage: React.FC = () => {
@@ -10,9 +10,10 @@ const GamePage: React.FC = () => {
   const [selectedWinners, setSelectedWinners] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [showBankSettings, setShowBankSettings] = useState(false);
-  const [settings, setSettings] = useState({ minBet: 0, startingBalance: 0 });
+  const [settings, setSettings] = useState({ minBet: 0, startingBalance: 0, smallBlind: 0, bigBlind: 0 });
   const [showRanking, setShowRanking] = useState(false);
   const [showCardRanking, setShowCardRanking] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     if (gameState?.sessionId && userInfo) {
@@ -30,6 +31,8 @@ const GamePage: React.FC = () => {
       setSettings({
         minBet: gameState.minBet,
         startingBalance: gameState.startingBalance,
+        smallBlind: gameState.smallBlind,
+        bigBlind: gameState.bigBlind,
       });
     }
   }, [gameState]);
@@ -61,6 +64,14 @@ const GamePage: React.FC = () => {
   if (!gameState || !userInfo || !gameState.players) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-xl font-medium">Loading Game State...</div>;
 
   const isHost = gameState.players.find(p => p.id === userInfo.id)?.isHost;
+  const myId = socketService.getPlayerId();
+  const myPlayer = gameState.players.find(p => p.id === myId);
+  const maxBet = Math.max(...gameState.players.map(p => p.currentBet));
+  const myBet = myPlayer?.currentBet ?? 0;
+  const canCheck = myBet >= maxBet;
+  const isInRound = ['pre_flop', 'flop', 'turn', 'river'].includes(gameState.status);
+  const streetLabel: Record<string, string> = { pre_flop: 'Pre-Flop', flop: 'Flop', turn: 'Turn', river: 'River' };
+  const streetOrder = ['pre_flop', 'flop', 'turn', 'river'];
 
   const handleStartRound = () => {
     socketService.emit('start_round', { sessionId: gameState.sessionId }, (res: any) => {
@@ -69,10 +80,27 @@ const GamePage: React.FC = () => {
     });
   };
 
+  const handleCheck = () => {
+    socketService.emit('check', {
+      sessionId: gameState.sessionId,
+      playerId: socketService.getPlayerId()
+    }, (res: any) => {
+      if (!res.success) toast.error(res.error);
+      else toast.success('Checked');
+    });
+  };
+
+  const handleAdvanceStreet = () => {
+    socketService.emit('advance_street', { sessionId: gameState.sessionId }, (res: any) => {
+      if (!res.success) toast.error(res.error);
+      else toast.success('Street advanced!');
+    });
+  };
+
   const handleEndRound = () => {
     socketService.emit('end_round', { sessionId: gameState.sessionId }, (res: any) => {
       if (!res.success) toast.error(res.error);
-      else toast.success('Round ended!');
+      else toast.success('Moved to showdown!');
     });
   };
 
@@ -193,8 +221,12 @@ const GamePage: React.FC = () => {
               )}
             </h1>
             <p className="text-sm text-slate-400 flex items-center gap-2">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+              <span className={`w-2 h-2 rounded-full animate-pulse ${
+                isInRound ? 'bg-green-500' : gameState.status === 'showdown' ? 'bg-indigo-500' : 'bg-slate-500'
+              }`}></span>
               Round {gameState.currentRound} • {gameState.players.length} Players
+              {isInRound && <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded font-bold uppercase">{streetLabel[gameState.status]}</span>}
+              {gameState.status === 'showdown' && <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded font-bold uppercase">Showdown</span>}
             </p>
           </div>
         </div>
@@ -213,6 +245,13 @@ const GamePage: React.FC = () => {
             title="Player Rankings"
           >
             <Trophy size={18} className="text-yellow-500" />
+          </button>
+          <button
+            onClick={() => setShowHistory(true)}
+            className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl border border-slate-700 transition-colors group relative"
+            title="Round History"
+          >
+            <History size={18} className="text-slate-400" />
           </button>
           <div className="text-right">
             <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Your Wallet</p>
@@ -267,11 +306,25 @@ const GamePage: React.FC = () => {
                       {player.name[0].toUpperCase()}
                     </div>
                     <div>
-                      <p className="font-bold text-white flex items-center gap-2">
+                      <p className="font-bold text-white flex items-center gap-1.5">
                         {player.name}
                         {player.isHost && <span className="text-[10px] bg-indigo-500 text-white px-1.5 py-0.5 rounded uppercase font-black">Host</span>}
+                        {index === gameState.activePlayerIndex && isInRound && (
+                          <span className="text-[10px] bg-yellow-500 text-slate-900 px-1.5 py-0.5 rounded uppercase font-black">Dealer</span>
+                        )}
+                        {player.isAllIn && (
+                          <span className="text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded uppercase font-black">All-In</span>
+                        )}
                       </p>
-                      <p className="text-xs text-slate-500 font-mono">${player.balance.toFixed(2)}</p>
+                      <p className="text-xs text-slate-500 font-mono flex items-center gap-1.5">
+                        ${player.balance.toFixed(2)}
+                        {gameState.status === 'pre_flop' && player.currentBet === gameState.smallBlind && player.currentBet > 0 && (
+                          <span className="text-[9px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-bold">SB</span>
+                        )}
+                        {gameState.status === 'pre_flop' && player.currentBet === gameState.bigBlind && player.currentBet > 0 && (
+                          <span className="text-[9px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-bold">BB</span>
+                        )}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -323,7 +376,7 @@ const GamePage: React.FC = () => {
               <TrendingUp size={16} /> Action Panel
             </h3>
             
-            {gameState.status === 'lobby' ? (
+            {gameState.status === 'lobby' && (
               <div className="space-y-4">
                 {isHost ? (
                   <button 
@@ -341,8 +394,49 @@ const GamePage: React.FC = () => {
                   </div>
                 )}
               </div>
-            ) : (
+            )}
+
+            {gameState.status === 'showdown' && (
+              <div className="space-y-4">
+                <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-700 text-center">
+                  <div className="animate-pulse mb-3 inline-block p-2 bg-indigo-500/20 rounded-full">
+                    <UserCheck size={20} className="text-indigo-400" />
+                  </div>
+                  <p className="text-slate-400 text-sm italic">Select winners to distribute the pot.</p>
+                </div>
+              </div>
+            )}
+
+            {gameState.status === 'ended' && (
+              <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-700 text-center">
+                <p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Game Over</p>
+              </div>
+            )}
+
+            {isInRound && (
               <div className="space-y-6">
+                {/* Street Indicator */}
+                <div className="flex items-center justify-between px-2">
+                  {streetOrder.map((s, i) => {
+                    const currentIdx = streetOrder.indexOf(gameState.status);
+                    const isActive = i === currentIdx;
+                    const isPast = i < currentIdx;
+                    return (
+                      <div key={s} className="flex items-center gap-1">
+                        <div className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg transition-all ${
+                          isActive ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' :
+                          isPast ? 'text-slate-600' : 'text-slate-700'
+                        }`}>
+                          {streetLabel[s]}
+                        </div>
+                        {i < streetOrder.length - 1 && (
+                          <ChevronRight size={12} className={isPast ? 'text-slate-600' : 'text-slate-700'} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Bet Amount</label>
                   <div className="relative">
@@ -362,10 +456,17 @@ const GamePage: React.FC = () => {
                     <Coins size={20} className="text-yellow-500" />
                     <span className="text-xs">Bet</span>
                   </button>
-                  <button onClick={handleCall} className="p-4 rounded-2xl bg-slate-700 hover:bg-slate-600 text-white font-bold transition-all active:scale-95 flex flex-col items-center gap-2">
-                    <TrendingUp size={20} className="text-green-500" />
-                    <span className="text-xs">Call</span>
-                  </button>
+                  {canCheck ? (
+                    <button onClick={handleCheck} className="p-4 rounded-2xl bg-slate-700 hover:bg-slate-600 text-white font-bold transition-all active:scale-95 flex flex-col items-center gap-2">
+                      <CheckCircle size={20} className="text-green-500" />
+                      <span className="text-xs">Check</span>
+                    </button>
+                  ) : (
+                    <button onClick={handleCall} className="p-4 rounded-2xl bg-slate-700 hover:bg-slate-600 text-white font-bold transition-all active:scale-95 flex flex-col items-center gap-2">
+                      <TrendingUp size={20} className="text-green-500" />
+                      <span className="text-xs">Call</span>
+                    </button>
+                  )}
                   <button onClick={handleRaise} className="p-4 rounded-2xl bg-slate-700 hover:bg-slate-600 text-white font-bold transition-all active:scale-95 flex flex-col items-center gap-2">
                     <Plus size={20} className="text-indigo-500" />
                     <span className="text-xs">Raise</span>
@@ -377,12 +478,25 @@ const GamePage: React.FC = () => {
                 </div>
 
                 {isHost && (
-                  <button 
-                    onClick={handleEndRound}
-                    className="w-full py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 font-bold transition-all border border-red-500/20 flex items-center justify-center gap-2 text-sm"
-                  >
-                    <StopCircle size={16} /> End Round
-                  </button>
+                  <div className="space-y-2">
+                    <button 
+                      onClick={handleAdvanceStreet}
+                      disabled={gameState.status === 'river'}
+                      className={`w-full py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-sm ${
+                        gameState.status === 'river'
+                          ? 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700'
+                          : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20'
+                      }`}
+                    >
+                      <SkipForward size={16} /> Next Street — {streetLabel[gameState.status]} → {streetOrder[streetOrder.indexOf(gameState.status) + 1] && streetLabel[streetOrder[streetOrder.indexOf(gameState.status) + 1]]}
+                    </button>
+                    <button 
+                      onClick={handleEndRound}
+                      className="w-full py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 font-bold transition-all border border-red-500/20 flex items-center justify-center gap-2 text-sm"
+                    >
+                      <StopCircle size={16} /> End Round → Showdown
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -436,6 +550,18 @@ const GamePage: React.FC = () => {
                 </div>
               </div>
 
+              <div className="flex gap-3 p-3 bg-slate-900/50 rounded-xl border border-slate-700">
+                <div className="flex-1 text-center">
+                  <p className="text-[10px] uppercase font-bold text-slate-500 mb-1">Small Blind</p>
+                  <p className="text-lg font-mono font-black text-slate-300">${gameState.smallBlind}</p>
+                </div>
+                <div className="w-px bg-slate-700" />
+                <div className="flex-1 text-center">
+                  <p className="text-[10px] uppercase font-bold text-slate-500 mb-1">Big Blind</p>
+                  <p className="text-lg font-mono font-black text-slate-300">${gameState.bigBlind}</p>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Starting Player Turn</label>
                 <select 
@@ -469,7 +595,7 @@ const GamePage: React.FC = () => {
       )}
 
       {/* Winner Selection Modal */}
-      {isHost && gameState.status === 'lobby' && gameState.currentRound > 0 && gameState.pot > 0 && (
+      {isHost && gameState.status === 'showdown' && gameState.pot > 0 && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 p-8 rounded-3xl max-w-md w-full shadow-2xl border border-slate-700 ring-1 ring-white/10">
             <div className="flex items-center gap-3 mb-6">
@@ -566,6 +692,60 @@ const GamePage: React.FC = () => {
                     <span className="text-lg font-mono font-black text-green-400">${player.balance.toFixed(2)}</span>
                   </div>
                 ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Round History Sidebar */}
+      {showHistory && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+            onClick={() => setShowHistory(false)}
+          />
+          <div className="absolute right-0 top-0 h-full w-full max-w-sm bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-500/20 rounded-lg">
+                  <History className="text-indigo-400 w-5 h-5" />
+                </div>
+                <h2 className="text-lg font-bold text-white">Round History</h2>
+              </div>
+              <button
+                onClick={() => setShowHistory(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {gameState.history.length === 0 ? (
+                <div className="text-center py-12">
+                  <History size={32} className="text-slate-700 mx-auto mb-3" />
+                  <p className="text-slate-500 text-sm">No rounds played yet</p>
+                </div>
+              ) : (
+                [...gameState.history].reverse().map((entry) => (
+                  <div key={entry.round} className="p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Round {entry.round}</span>
+                      <span className="text-[10px] text-slate-600">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <p className="text-lg font-mono font-black text-yellow-400 mb-2">${entry.pot.toFixed(2)} Pot</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {entry.winnerIds.map((wid) => {
+                        const p = gameState.players.find(pl => pl.id === wid);
+                        return (
+                          <span key={wid} className="text-[10px] bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full border border-green-500/20 font-bold">
+                            {p?.name ?? 'Unknown'}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

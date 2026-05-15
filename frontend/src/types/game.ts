@@ -3,13 +3,16 @@ export interface Player {
   name: string;
   balance: number;
   currentBet: number;
+  totalRoundBet: number;
   isFolded: boolean;
   isHost: boolean;
   isPaused: boolean;
+  hasActed: boolean;
+  isAllIn: boolean;
   socketId: string;
 }
 
-export type GameStatus = 'lobby' | 'in_round' | 'ended';
+export type GameStatus = 'lobby' | 'pre_flop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended';
 
 export interface RoundHistory {
   round: number;
@@ -26,6 +29,8 @@ export interface GameState {
   status: GameStatus;
   startingBalance: number;
   minBet: number;
+  smallBlind: number;
+  bigBlind: number;
   activePlayerIndex: number;
   history: RoundHistory[];
 }

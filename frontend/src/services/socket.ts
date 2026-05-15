@@ -3,7 +3,7 @@ import { useGameStore } from '../store/gameStore';
 import type { GameState } from '../types/game';
 import { v4 as uuidv4 } from 'uuid';
 
-const SOCKET_URL = 'http://localhost:3000';
+const SOCKET_URL = `http://${window.location.hostname}:3000`;
 
 class SocketService {
   private socket: Socket | null = null;

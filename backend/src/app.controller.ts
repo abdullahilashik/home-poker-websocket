@@ -9,4 +9,9 @@ export class AppController {
   getHello(): string {
     return this.appService.getHello();
   }
+
+  @Get('host-info')
+  getHostInfo(): { ip: string; port: number } {
+    return this.appService.getHostInfo();
+  }
 }

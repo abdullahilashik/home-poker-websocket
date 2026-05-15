@@ -6,17 +6,20 @@ export interface RoundHistory {
 }
 
 export interface Player {
-  id: string; // Now a persistent UUID from client
-  socketId: string; // Current socket connection id
+  id: string;
+  socketId: string;
   name: string;
   balance: number;
   currentBet: number;
+  totalRoundBet: number;
   isFolded: boolean;
   isHost: boolean;
   isPaused: boolean;
+  hasActed: boolean;
+  isAllIn: boolean;
 }
 
-export type GameStatus = 'lobby' | 'in_round' | 'ended';
+export type GameStatus = 'lobby' | 'pre_flop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended';
 
 export interface GameState {
   sessionId: string;
@@ -26,6 +29,8 @@ export interface GameState {
   status: GameStatus;
   startingBalance: number;
   minBet: number;
+  smallBlind: number;
+  bigBlind: number;
   activePlayerIndex: number;
   history: RoundHistory[];
 }

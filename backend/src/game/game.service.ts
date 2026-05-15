@@ -16,6 +16,8 @@ export class GameService {
       status: 'lobby',
       startingBalance,
       minBet,
+      smallBlind: Math.floor(minBet / 2),
+      bigBlind: minBet,
       activePlayerIndex: 0,
       history: [],
     };
@@ -41,9 +43,12 @@ export class GameService {
         name,
         balance: game.startingBalance,
         currentBet: 0,
+        totalRoundBet: 0,
         isFolded: false,
         isHost,
         isPaused: false,
+        hasActed: false,
+        isAllIn: false,
       };
       game.players.push(player);
     } else {
@@ -56,14 +61,74 @@ export class GameService {
   startRound(sessionId: string): GameState {
     const game = this.getGame(sessionId);
     if (!game) throw new Error('Game not found');
+    if (game.players.length < 2) throw new Error('Need at least 2 players');
 
-    game.status = 'in_round';
+    game.status = 'pre_flop';
     game.currentRound++;
     game.pot = 0;
     game.players.forEach(p => {
       p.currentBet = 0;
+      p.totalRoundBet = 0;
       p.isFolded = false;
+      p.hasActed = false;
+      p.isAllIn = false;
     });
+
+    // Post blinds
+    const activePlayers = game.players.filter(p => !p.isPaused);
+    const sbIndex = game.activePlayerIndex % game.players.length;
+    const bbIndex = (sbIndex + 1) % game.players.length;
+
+    const sbPlayer = game.players[sbIndex];
+    const bbPlayer = game.players[bbIndex];
+
+    const sbAmount = Math.min(game.smallBlind, sbPlayer.balance);
+    const bbAmount = Math.min(game.bigBlind, bbPlayer.balance);
+
+    sbPlayer.balance -= sbAmount;
+    sbPlayer.currentBet += sbAmount;
+    sbPlayer.totalRoundBet += sbAmount;
+    if (sbPlayer.balance === 0) sbPlayer.isAllIn = true;
+    
+    bbPlayer.balance -= bbAmount;
+    bbPlayer.currentBet += bbAmount;
+    bbPlayer.totalRoundBet += bbAmount;
+    if (bbPlayer.balance === 0) bbPlayer.isAllIn = true;
+
+    game.pot = sbAmount + bbAmount;
+
+    // Action starts after BB
+    game.activePlayerIndex = (bbIndex + 1) % game.players.length;
+    // Skip paused players
+    this.advanceToNextActivePlayer(game);
+
+    return game;
+  }
+
+  advanceStreet(sessionId: string): GameState {
+    const game = this.getGame(sessionId);
+    if (!game) throw new Error('Game not found');
+
+    const streetOrder: GameStatus[] = ['pre_flop', 'flop', 'turn', 'river'];
+    const currentIdx = streetOrder.indexOf(game.status as any);
+    if (currentIdx === -1 || currentIdx >= streetOrder.length - 1) {
+      throw new Error('No more streets to advance');
+    }
+
+    game.status = streetOrder[currentIdx + 1];
+
+    // Reset current bets and action tracking for new street
+    game.players.forEach(p => {
+      p.currentBet = 0;
+      p.hasActed = false;
+    });
+
+    // Action starts after the dealer (BB position)
+    const lastPos = game.players.length - 1;
+    const sbPos = this.findSBPosition(game);
+    const bbPos = (sbPos + 1) % game.players.length;
+    game.activePlayerIndex = (bbPos + 1) % game.players.length;
+    this.advanceToNextActivePlayer(game);
 
     return game;
   }
@@ -75,14 +140,37 @@ export class GameService {
     const player = game.players.find(p => p.id === playerId);
     if (!player) throw new Error('Player not found');
     if (player.isPaused) throw new Error('You are currently paused by the host');
+    this.validateTurn(game, playerId);
+    if (this.isStreetDone(game)) throw new Error('Betting complete for this street');
     if (amount < game.minBet) throw new Error(`Minimum bet is $${game.minBet}`);
-
     if (player.balance < amount) throw new Error('Insufficient balance');
 
     player.balance -= amount;
     player.currentBet += amount;
+    player.totalRoundBet += amount;
     game.pot += amount;
+    player.hasActed = true;
+    if (player.balance === 0) player.isAllIn = true;
 
+    this.advanceTurn(game);
+    return game;
+  }
+
+  check(sessionId: string, playerId: string): GameState {
+    const game = this.getGame(sessionId);
+    if (!game) throw new Error('Game not found');
+
+    const player = game.players.find(p => p.id === playerId);
+    if (!player) throw new Error('Player not found');
+    if (player.isPaused) throw new Error('You are currently paused by the host');
+    this.validateTurn(game, playerId);
+    if (this.isStreetDone(game)) throw new Error('Betting complete for this street');
+
+    const maxBet = Math.max(...game.players.map(p => p.currentBet));
+    if (player.currentBet < maxBet) throw new Error('Cannot check, there is a bet to call');
+
+    player.hasActed = true;
+    this.advanceTurn(game);
     return game;
   }
 
@@ -93,16 +181,22 @@ export class GameService {
     const player = game.players.find(p => p.id === playerId);
     if (!player) throw new Error('Player not found');
     if (player.isPaused) throw new Error('You are currently paused by the host');
+    this.validateTurn(game, playerId);
+    if (this.isStreetDone(game)) throw new Error('Betting complete for this street');
 
     const maxBet = Math.max(...game.players.map(p => p.currentBet));
-    const callAmount = maxBet - player.currentBet;
+    const callAmount = Math.min(maxBet - player.currentBet, player.balance);
 
-    if (player.balance < callAmount) throw new Error('Insufficient balance to call');
+    if (callAmount <= 0) throw new Error('Nothing to call');
 
     player.balance -= callAmount;
     player.currentBet += callAmount;
+    player.totalRoundBet += callAmount;
     game.pot += callAmount;
+    player.hasActed = true;
+    if (player.balance === 0) player.isAllIn = true;
 
+    this.advanceTurn(game);
     return game;
   }
 
@@ -113,16 +207,31 @@ export class GameService {
     const player = game.players.find(p => p.id === playerId);
     if (!player) throw new Error('Player not found');
     if (player.isPaused) throw new Error('You are currently paused by the host');
+    this.validateTurn(game, playerId);
+    if (this.isStreetDone(game)) throw new Error('Betting complete for this street');
 
     const maxBet = Math.max(...game.players.map(p => p.currentBet));
-    const totalNeeded = (maxBet - player.currentBet) + raiseAmount;
+    const callPortion = maxBet - player.currentBet;
+    const totalNeeded = callPortion + raiseAmount;
 
     if (player.balance < totalNeeded) throw new Error('Insufficient balance to raise');
+    if (raiseAmount < game.minBet) throw new Error(`Minimum raise is $${game.minBet}`);
 
     player.balance -= totalNeeded;
     player.currentBet += totalNeeded;
+    player.totalRoundBet += totalNeeded;
     game.pot += totalNeeded;
+    player.hasActed = true;
+    if (player.balance === 0) player.isAllIn = true;
 
+    // Reset hasActed for other players since there's a new raise
+    game.players.forEach(p => {
+      if (p.id !== playerId && !p.isFolded && !p.isAllIn) {
+        p.hasActed = false;
+      }
+    });
+
+    this.advanceTurn(game);
     return game;
   }
 
@@ -133,8 +242,11 @@ export class GameService {
     const player = game.players.find(p => p.id === playerId);
     if (!player) throw new Error('Player not found');
     if (player.isPaused) throw new Error('You are currently paused by the host');
+    this.validateTurn(game, playerId);
+    if (this.isStreetDone(game)) throw new Error('Betting complete for this street');
 
     player.isFolded = true;
+    this.advanceTurn(game);
     return game;
   }
 
@@ -142,7 +254,7 @@ export class GameService {
     const game = this.getGame(sessionId);
     if (!game) throw new Error('Game not found');
 
-    game.status = 'lobby'; // Back to lobby or waiting for winner selection
+    game.status = 'showdown';
     return game;
   }
 
@@ -150,13 +262,27 @@ export class GameService {
     const game = this.getGame(sessionId);
     if (!game) throw new Error('Game not found');
 
-    const winAmount = game.pot / winnerIds.length;
-    winnerIds.forEach(id => {
-      const player = game.players.find(p => p.id === id);
-      if (player) {
-        player.balance += winAmount;
+    const sortedByBet = [...game.players].sort((a, b) => a.totalRoundBet - b.totalRoundBet);
+    const winners = game.players.filter(p => winnerIds.includes(p.id));
+
+    let previousLevel = 0;
+
+    for (const player of sortedByBet) {
+      if (player.totalRoundBet === previousLevel) continue;
+      if (player.totalRoundBet <= 0) continue;
+
+      const levelDiff = player.totalRoundBet - previousLevel;
+      const contributors = game.players.filter(p => p.totalRoundBet >= player.totalRoundBet);
+      const sidePot = levelDiff * contributors.length;
+
+      const eligibleWinners = winners.filter(w => w.totalRoundBet >= player.totalRoundBet);
+      if (eligibleWinners.length > 0) {
+        const share = sidePot / eligibleWinners.length;
+        eligibleWinners.forEach(w => w.balance += share);
       }
-    });
+
+      previousLevel = player.totalRoundBet;
+    }
 
     game.history.push({
       round: game.currentRound,
@@ -167,7 +293,12 @@ export class GameService {
 
     game.pot = 0;
     game.status = 'lobby';
-    game.players.forEach(p => p.currentBet = 0);
+    game.players.forEach(p => {
+      p.currentBet = 0;
+      p.totalRoundBet = 0;
+      p.hasActed = false;
+      p.isAllIn = false;
+    });
 
     return game;
   }
@@ -203,6 +334,7 @@ export class GameService {
     if (!player) throw new Error('Player not found');
 
     player.balance += amount;
+    if (player.isAllIn) player.isAllIn = false;
     return game;
   }
 
@@ -219,6 +351,49 @@ export class GameService {
     if (!game) throw new Error('Game not found');
 
     Object.assign(game, settings);
+    // Keep blinds in sync with minBet if minBet changed
+    if (settings.minBet !== undefined) {
+      game.smallBlind = Math.floor(settings.minBet / 2);
+      game.bigBlind = settings.minBet;
+    }
     return game;
+  }
+
+  // --- Private helpers ---
+
+  private validateTurn(game: GameState, playerId: string): void {
+    const activePlayer = game.players[game.activePlayerIndex];
+    if (activePlayer && activePlayer.id !== playerId) {
+      throw new Error('Not your turn');
+    }
+  }
+
+  private isStreetDone(game: GameState): boolean {
+    const activePlayers = game.players.filter(p => !p.isFolded && !p.isPaused);
+    if (activePlayers.length <= 1) return true;
+
+    const maxBet = Math.max(...game.players.map(p => p.currentBet));
+    const allHaveActed = activePlayers.every(p => p.hasActed || p.isAllIn);
+    const allBetsEqual = activePlayers.every(p => p.currentBet === maxBet || p.isAllIn);
+
+    return allHaveActed && allBetsEqual;
+  }
+
+  private advanceTurn(game: GameState): void {
+    game.activePlayerIndex = (game.activePlayerIndex + 1) % game.players.length;
+    this.advanceToNextActivePlayer(game);
+  }
+
+  private advanceToNextActivePlayer(game: GameState): void {
+    const maxIterations = game.players.length;
+    for (let i = 0; i < maxIterations; i++) {
+      const player = game.players[game.activePlayerIndex];
+      if (!player.isFolded && !player.isPaused && !player.isAllIn) return;
+      game.activePlayerIndex = (game.activePlayerIndex + 1) % game.players.length;
+    }
+  }
+
+  private findSBPosition(game: GameState): number {
+    return game.activePlayerIndex > 0 ? game.activePlayerIndex - 1 : game.players.length - 1;
   }
 }

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { socketService } from '../services/socket';
 import { useGameStore } from '../store/gameStore';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Wallet, Users, PlusCircle, Settings } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -11,7 +11,15 @@ const JoinPage: React.FC = () => {
   const [startingBalance, setStartingBalance] = useState('1000');
   const [minBet, setMinBet] = useState('10');
   const [showSettings, setShowSettings] = useState(false);
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const sessionFromUrl = searchParams.get('session');
+    if (sessionFromUrl) {
+      setSessionId(sessionFromUrl);
+    }
+  }, []);
   const setGameState = useGameStore((state) => state.setGameState);
   const setUserInfo = useGameStore((state) => state.setUserInfo);
 
